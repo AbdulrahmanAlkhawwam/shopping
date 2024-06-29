@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:acodemind04/data/categories.dart';
@@ -16,25 +17,24 @@ class GroceryList extends StatefulWidget {
 
 class _GroceryListState extends State<GroceryList> {
 
+  late Future<List <GroceryItem>> _loadedItem ;
+  List <GroceryItem> _groceryItem = [];
+
   @override
   void initState() {
     // TODO: implement initState
     super.initState();
-    _loadItems();
+    _loadedItem = _loadItems();
   }
 
-  List <GroceryItem> _groceryItem = [];
-  var _isLoading = true ;
-  String _msg  = "No items added yet.";
-
-  void _loadItems() async {
+  Future<List <GroceryItem>> _loadItems() async {
     final url = Uri.https("flutter-shopping-app-23845-default-rtdb.firebaseio.com", "shopping-list.json");
     final response = await http.get(url);
     if (response.statusCode >= 400){
-      setState(() {
-        _isLoading = false ;
-        _msg = "Failed in fetch data , please try again later." ;
-      });
+     throw Exception("Failed in fetch data , please try again later.");
+    }
+    if (response.body == "null"){
+      return [];
     }
     final Map <String, dynamic> listData = json.decode(response.body);
     final List <GroceryItem> loadedItem = [];
@@ -49,31 +49,48 @@ class _GroceryListState extends State<GroceryList> {
         ),
       );
     }
-    setState(() {
-      _groceryItem = loadedItem ;
-      _isLoading = false ;
-    });
+   return loadedItem ;
   }
 
   void _addItem () async {
-    final newItem = await Navigator.push<GroceryItem>(
-      context,
-      MaterialPageRoute(
-        builder: (context)=> const NewItem(),
-      ),
-    );
-    if (newItem == null){
-      return ;
+    try{
+      final newItem = await Navigator.push<GroceryItem>(
+        context,
+        MaterialPageRoute(
+          builder: (context)=> const NewItem(),
+        ),
+      );
+      if (newItem == null){
+        return ;
+      }
+      setState(() {
+        _groceryItem.add(newItem);
+      });
     }
-    setState(() {
-      _groceryItem.add(newItem);
-    });
+    catch (error){
+      print (error.toString());
+    }
   }
 
-  void _removeItem (GroceryItem item){
-    setState(() {
-      _groceryItem.remove(item);
-    });
+  void _removeItem (GroceryItem item) async{
+    try{
+      final index = _groceryItem.indexOf(item);
+      setState(() {
+        _groceryItem.remove(item);
+      });
+      final url = Uri.https("flutter-shopping-app-23845-default-rtdb.firebaseio.com", "shopping-list/${item.id}.json");
+      final response = await http.delete(url);
+      if (response.statusCode >= 400){
+        setState(() {
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Failed in delete data , please try again later.")));
+          _groceryItem.insert(index, item);
+        });
+      }
+    }
+    catch (error){
+      print (error.toString()) ;
+    }
   }
 
 
@@ -91,41 +108,64 @@ class _GroceryListState extends State<GroceryList> {
           )
         ],
       ),
-      body: _groceryItem.isEmpty || !_isLoading
-          ?
-      Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.report_gmailerrorred_outlined,size: 150,),
-            Text( _msg ,
-              style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
+      body: FutureBuilder(
+        future: _loadedItem,
+        builder: (context , snapshot){
+          if(snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator(),);
+          }
+          if (snapshot.hasError){
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.report_gmailerrorred_outlined,size: 150,),
+                  Text(  snapshot.error.toString(),
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
-      )
-          :
-      ListView.builder (
-        itemBuilder: (context , index ){
-          return Dismissible(
-            onDismissed: (direction)=> _removeItem(_groceryItem[index]),
-            key: ValueKey(_groceryItem[index].id),
-            child: ListTile(
-              title: Text (_groceryItem[index].name),
-              leading: Container(
-                height: 24,
-                width: 24,
-                color: _groceryItem[index].category.color,
+            );
+          }
+          if (snapshot.data!.isEmpty){
+            return const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.report_gmailerrorred_outlined,size: 150,),
+                  Text( "No items added yet." ,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
               ),
-              trailing: Text(_groceryItem[index].quantity.toString()),
-            ),
-          );
+            );
+          }
+          return ListView.builder (
+              itemBuilder: (context , index ){
+                return Dismissible(
+                  onDismissed: (direction)=> _removeItem(snapshot.data![index]),
+                  key: ValueKey(snapshot.data![index].id),
+                  child: ListTile(
+                    title: Text (snapshot.data![index].name),
+                    leading: Container(
+                      height: 24,
+                      width: 24,
+                      color: snapshot.data![index].category.color,
+                    ),
+                    trailing: Text(snapshot.data![index].quantity.toString()),
+                  ),
+                );
+              },
+              itemCount: snapshot.data!.length,
+            ) ;
           },
-        itemCount: _groceryItem.length,
-      )
+      ),
     );
   }
 }
